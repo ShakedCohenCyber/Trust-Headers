@@ -276,7 +276,7 @@ with input_col:
             height=315,
             placeholder="From: Example <sender@example.com>\nReturn-Path: <bounce@example.com>\n...",
         )
-        enrich_enabled = st.checkbox("QUERY THREAT INTEL APIS", value=True)
+        enrich_enabled = st.checkbox("QUERY THREAT INTEL APIS", value=False)
         st.caption("Data is processed in memory. Body content is discarded; attachments are counted and hashed.")
         analyze_clicked = st.button("ANALYZE TRANSMISSION", type="primary", width="stretch")
         if analyze_clicked:
