@@ -37,6 +37,18 @@ Authentication-Results: mx.example; spf=fail smtp.mailfrom=bounce@other.example;
     assert findings["DMARC alignment"].status == "ANOMALY"
 
 
+def test_flags_reply_to_domain_mismatch() -> None:
+    raw = """From: Kupat Ha'ir <michael@jewishaffiliatenetwork.net>
+Reply-To: <info@merkavamarketing.com>
+
+"""
+    findings = findings_by_rule(raw)
+
+    assert findings["Reply-To mismatch"].status == "ANOMALY"
+    assert "from=michael@jewishaffiliatenetwork.net" in findings["Reply-To mismatch"].evidence
+    assert "reply-to=info@merkavamarketing.com" in findings["Reply-To mismatch"].evidence
+
+
 def test_infers_dkim_alignment_without_explicit_dmarc_result() -> None:
     raw = """From: Alerts <alerts@acme.example>
 Authentication-Results: mx.example; dkim=pass header.d=mail.acme.example

@@ -15,12 +15,14 @@ Subject: Test message
 X-Unrelated: should-not-be-retained
 
 SECRET BODY CONTENT
+https://login.acme.example/reset
 """
     parsed = parse_email(raw)
 
     assert parsed.sender_headers["From"] == ["Acme Alerts <alerts@acme.example>"]
     assert parsed.originating_ips == ["8.8.8.8"]
     assert "acme.example" in parsed.domains
+    assert parsed.urls == ["https://login.acme.example/reset"]
     assert "SECRET BODY CONTENT" not in str(parsed.to_dict())
     assert "X-Unrelated" not in str(parsed.to_dict())
 
@@ -35,6 +37,7 @@ Content-Type: multipart/mixed; boundary="BOUNDARY"
 Content-Type: text/plain
 
 body
+https://download.example.net/file
 --BOUNDARY
 Content-Type: application/octet-stream
 Content-Disposition: attachment; filename="sample.bin"
@@ -46,6 +49,7 @@ aGVsbG8=
     parsed = parse_email(raw, "message.eml")
 
     assert len(parsed.attachments) == 1
+    assert parsed.urls == ["https://download.example.net/file"]
     assert parsed.attachments[0].filename == "sample.bin"
     assert parsed.attachments[0].size == 5
     assert parsed.attachments[0].sha256 == hashlib.sha256(b"hello").hexdigest()

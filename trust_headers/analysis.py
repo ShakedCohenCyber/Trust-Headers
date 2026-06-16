@@ -11,6 +11,7 @@ from .models import AnalysisResult, Finding, ParsedEmail
 def analyze_email(parsed: ParsedEmail) -> AnalysisResult:
     findings = [
         _name_mismatch(parsed),
+        _reply_to_mismatch(parsed),
         _domain_mismatch(parsed),
         _spf_check(parsed),
         _dmarc_alignment(parsed),
@@ -53,6 +54,34 @@ def _name_mismatch(parsed: ParsedEmail) -> Finding:
         "ANOMALY",
         "Display name does not resemble the sender local-part.",
         f"display={display_name!r}; local-part={local_part!r}",
+    )
+
+
+def _reply_to_mismatch(parsed: ParsedEmail) -> Finding:
+    from_header = _first(parsed, "From")
+    reply_to_header = _first(parsed, "Reply-To")
+    if not reply_to_header:
+        return Finding("Reply-To mismatch", "PASS", "No Reply-To header is present; replies default to From.")
+
+    from_address = parseaddr(from_header)[1].lower()
+    reply_to_address = parseaddr(reply_to_header)[1].lower()
+    if not from_address or not reply_to_address:
+        return Finding(
+            "Reply-To mismatch",
+            "UNKNOWN",
+            "From or Reply-To address unavailable.",
+            f"from={from_header!r}; reply-to={reply_to_header!r}",
+        )
+    evidence = f"from={from_address}; reply-to={reply_to_address}"
+    if from_address == reply_to_address:
+        return Finding("Reply-To mismatch", "PASS", "Reply-To matches the From address.", evidence)
+    if _aligned(_address_domain(from_address), _address_domain(reply_to_address)):
+        return Finding("Reply-To mismatch", "PASS", "Reply-To domain is aligned with the From domain.", evidence)
+    return Finding(
+        "Reply-To mismatch",
+        "ANOMALY",
+        "Reply-To address is not aligned with the From address.",
+        evidence,
     )
 
 

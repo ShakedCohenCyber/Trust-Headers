@@ -21,6 +21,7 @@ class ParsedEmail:
     authentication_headers: dict[str, list[str]] = field(default_factory=dict)
     originating_ips: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
+    urls: list[str] = field(default_factory=list)
     attachments: list[AttachmentArtifact] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

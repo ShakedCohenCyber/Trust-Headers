@@ -38,6 +38,7 @@ IP_CANDIDATE_RE = re.compile(
     r"(?<![\w:])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![\w:])"
 )
 DOMAIN_RE = re.compile(r"(?i)(?<![@\w.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
+URL_RE = re.compile(r"(?i)\bhttps?://[^\s<>'\"]+")
 
 
 class ParseError(ValueError):
@@ -55,11 +56,13 @@ def parse_email(content: bytes | str, filename: str = "pasted.txt") -> ParsedEma
     if isinstance(content, bytes) and suffix == ".eml":
         message = BytesParser(policy=policy.default).parsebytes(content)
         attachments = _hash_mime_attachments(message)
+        urls = _extract_message_urls(message)
     else:
         text = content.decode("utf-8", errors="replace") if isinstance(content, bytes) else content
         message = Parser(policy=policy.default).parsestr(_header_block(text))
         attachments = []
-    return _build_parsed_email(message, attachments)
+        urls = _extract_urls(text)
+    return _build_parsed_email(message, attachments, urls)
 
 
 def _parse_msg(content: bytes) -> ParsedEmail:
@@ -73,14 +76,20 @@ def _parse_msg(content: bytes) -> ParsedEmail:
         header_text = msg.header.as_string() if hasattr(msg.header, "as_string") else str(msg.header or "")
         message = Parser(policy=policy.default).parsestr(_header_block(header_text))
         attachments = []
+        url_text_parts = [header_text]
         for index, attachment in enumerate(msg.attachments, start=1):
             data = attachment.data
             if not isinstance(data, bytes):
                 data = bytes(data)
             filename = attachment.longFilename or attachment.shortFilename or f"attachment-{index}"
             attachments.append(_attachment_artifact(filename, data))
+        for attr in ("body", "htmlBody"):
+            value = getattr(msg, attr, "")
+            if value:
+                url_text_parts.append(_text(value))
+        urls = _extract_urls("\n".join(url_text_parts))
         msg.close()
-        return _build_parsed_email(message, attachments)
+        return _build_parsed_email(message, attachments, urls)
     except Exception as exc:
         raise ParseError(f"Could not parse MSG input: {exc}") from exc
 
@@ -107,6 +116,34 @@ def _hash_mime_attachments(message: Message) -> list[AttachmentArtifact]:
     return artifacts
 
 
+def _extract_message_urls(message: Message) -> list[str]:
+    text_parts: list[str] = []
+    for part in message.walk():
+        if part.get_content_disposition() == "attachment":
+            continue
+        if part.get_content_type() not in {"text/plain", "text/html"}:
+            continue
+        try:
+            text_parts.append(_text(part.get_content()))
+        except Exception:
+            payload = part.get_payload(decode=True)
+            if payload:
+                charset = part.get_content_charset() or "utf-8"
+                text_parts.append(payload.decode(charset, errors="replace"))
+    return _extract_urls("\n".join(text_parts))
+
+
+def _extract_urls(text: str) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in URL_RE.findall(text):
+        url = match.rstrip(".,;:!?)]}")
+        if url not in seen:
+            found.append(url)
+            seen.add(url)
+    return found[:50]
+
+
 def _attachment_artifact(filename: str, payload: bytes) -> AttachmentArtifact:
     return AttachmentArtifact(
         filename=_clean(filename, limit=260),
@@ -115,7 +152,9 @@ def _attachment_artifact(filename: str, payload: bytes) -> AttachmentArtifact:
     )
 
 
-def _build_parsed_email(message: Message, attachments: list[AttachmentArtifact]) -> ParsedEmail:
+def _build_parsed_email(
+    message: Message, attachments: list[AttachmentArtifact], urls: list[str]
+) -> ParsedEmail:
     sender = _collect_headers(message, SENDER_HEADERS)
     routing = _collect_headers(message, ROUTING_HEADERS)
     authentication = _collect_headers(message, AUTH_HEADERS)
@@ -131,6 +170,7 @@ def _build_parsed_email(message: Message, attachments: list[AttachmentArtifact])
         authentication_headers=authentication,
         originating_ips=_extract_public_ips(routing),
         domains=_extract_domains(sender, routing),
+        urls=urls,
         attachments=attachments,
     )
 
@@ -177,3 +217,9 @@ def _extract_domains(
 def _clean(value: str, limit: int) -> str:
     value = "".join(char for char in value if char in "\t\n" or ord(char) >= 32)
     return value.strip()[:limit]
+
+
+def _text(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)

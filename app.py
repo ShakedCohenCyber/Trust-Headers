@@ -10,7 +10,7 @@ import streamlit as st
 from trust_headers.analysis import analyze_email
 from trust_headers.intel import enrich_sync
 from trust_headers.parser import ParseError, parse_email
-from trust_headers.report import build_report
+from trust_headers.report import build_report, build_soc_notes
 
 st.set_page_config(
     page_title="Trust-Headers // SOC Mail Analyzer",
@@ -155,6 +155,7 @@ def render_results() -> None:
         return
     intel = st.session_state.get("intel_results", [])
     parsed = result.parsed
+    parsed_urls = getattr(parsed, "urls", [])
 
     verdict_col, anomaly_col, ip_col, domain_col, attachment_col = st.columns(5)
     verdict_col.metric("VERDICT", result.verdict)
@@ -164,7 +165,8 @@ def render_results() -> None:
     attachment_col.metric("ATTACHMENTS", len(parsed.attachments))
 
     findings_tab, artifacts_tab, intel_tab, export_tab = st.tabs(
-        ["LOCAL CHECKS", "ARTIFACTS", "THREAT INTEL", "EXPORT"]
+        ["LOCAL CHECKS", "ARTIFACTS", "THREAT INTEL", "EXPORT"],
+        default="EXPORT",
     )
     with findings_tab:
         st.dataframe(
@@ -189,6 +191,12 @@ def render_results() -> None:
                 width="stretch",
                 hide_index=True,
             )
+        if parsed_urls:
+            st.dataframe(
+                [{"URL": url} for url in parsed_urls],
+                width="stretch",
+                hide_index=True,
+            )
     with intel_tab:
         if intel:
             st.dataframe(
@@ -200,16 +208,26 @@ def render_results() -> None:
         else:
             st.info("No enrichment results. Enable enrichment and provide an email with public indicators.")
     with export_tab:
+        soc_notes = build_soc_notes(result, intel)
         report = build_report(result, intel)
-        st.caption("ONE-CLICK COPY: use the copy control in the summary block.")
-        st.code(report, language=None, wrap_lines=True)
+        st.caption("SOC-READY COPY: paste this narrative into the investigation notes.")
+        st.code(soc_notes, language=None, wrap_lines=True)
         st.download_button(
-            "DOWNLOAD SUMMARY.TXT",
-            data=report,
-            file_name="trust-headers-summary.txt",
+            "DOWNLOAD SOC-NOTES.TXT",
+            data=soc_notes,
+            file_name="trust-headers-soc-notes.txt",
             mime="text/plain",
             width="stretch",
         )
+        with st.expander("SUPPORTING TECHNICAL REPORT"):
+            st.code(report, language=None, wrap_lines=True)
+            st.download_button(
+                "DOWNLOAD TECHNICAL-REPORT.TXT",
+                data=report,
+                file_name="trust-headers-technical-report.txt",
+                mime="text/plain",
+                width="stretch",
+            )
 
 
 def run_analysis(raw_input: bytes | str, filename: str, enrich_enabled: bool) -> None:
