@@ -44,7 +44,7 @@ def load_api_keys() -> dict[str, str]:
 
 
 def inject_styles() -> None:
-    st.markdown(
+    st.html(
         """
         <style>
         :root {
@@ -117,25 +117,20 @@ def inject_styles() -> None:
           padding: .35rem .55rem;
           box-shadow: 3px 3px 0 var(--magenta);
         }
+        [data-testid="stMetricValue"] > div, [data-testid="stMetricValue"] p {
+          font-size: 1.2rem !important;
+        }
         [data-testid="stAlert"] { border: 2px solid var(--ink); border-radius: 0; }
         [data-testid="stStatusWidget"] {
           border: 3px dashed var(--blue);
           border-radius: 0;
           background: var(--cyan);
         }
-        .marquee {
-          border: 2px solid var(--ink);
-          background: var(--ink);
-          color: var(--lime);
-          padding: .2rem .5rem;
-          font-weight: bold;
-          white-space: nowrap;
-          overflow: hidden;
-        }
         .tiny { font-size: .75rem; }
+        [data-testid="stToolbar"], [data-testid="stHeader"] { display: none !important; }
+        .block-container { padding-top: 3rem !important; }
         </style>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
 
@@ -169,8 +164,17 @@ def render_results() -> None:
         default="EXPORT",
     )
     with findings_tab:
+        findings_to_show = []
+        for finding in result.findings:
+            if finding.status == "UNKNOWN":
+                continue
+            f_dict = asdict(finding)
+            if f_dict["status"] == "ANOMALY":
+                f_dict["status"] = "🚨 ANOMALY"
+            findings_to_show.append(f_dict)
+            
         st.dataframe(
-            [asdict(finding) for finding in result.findings],
+            findings_to_show,
             width="stretch",
             hide_index=True,
             column_order=("status", "rule", "summary", "evidence"),
@@ -230,7 +234,7 @@ def render_results() -> None:
             )
 
 
-def run_analysis(raw_input: bytes | str, filename: str, enrich_enabled: bool) -> None:
+def run_analysis(raw_input: bytes | str, filename: str, enrich_enabled: bool, selected_apis: list[str] | None = None) -> None:
     with st.status("INITIALIZING TRUST PIPELINE...", expanded=True) as status:
         status.write("Parsing retained headers and hashing attachments...")
         parsed = parse_email(raw_input, filename)
@@ -238,18 +242,33 @@ def run_analysis(raw_input: bytes | str, filename: str, enrich_enabled: bool) ->
         status.write("Local phishing checks complete.")
 
         intel: list[dict[str, str]] = []
+        selected = selected_apis or []
         if enrich_enabled and (parsed.originating_ips or parsed.domains):
             status.write("Dialing threat-intelligence providers in parallel...")
             keys = load_api_keys()
+            
+            if "ABUSEIPDB" not in selected: keys["ABUSEIPDB_API_KEY"] = ""
+            if "OTX" not in selected: keys["OTX_API_KEY"] = ""
+            if "VIRUSTOTAL" not in selected: keys["VIRUSTOTAL_API_KEY"] = ""
+            if "THREATFOX" not in selected: keys["THREATFOX_API_KEY"] = ""
+            
             fingerprint = hashlib.sha256(
                 "|".join(keys[name] for name in sorted(keys)).encode()
             ).hexdigest()
-            intel = cached_enrichment(
+            raw_intel = cached_enrichment(
                 tuple(parsed.originating_ips),
                 tuple(parsed.domains),
                 fingerprint,
                 keys,
             )
+            
+            disabled = set()
+            if "ABUSEIPDB" not in selected: disabled.add("AbuseIPDB")
+            if "OTX" not in selected: disabled.add("AlienVault OTX")
+            if "VIRUSTOTAL" not in selected: disabled.add("VirusTotal")
+            if "THREATFOX" not in selected: disabled.add("Abuse.ch ThreatFox")
+            
+            intel = [r for r in raw_intel if not (r["source"] in disabled and r["status"] == "Not Configured")]
             status.write("Threat-intelligence calls complete.")
         else:
             status.write("Threat-intelligence enrichment skipped.")
@@ -261,10 +280,7 @@ def run_analysis(raw_input: bytes | str, filename: str, enrich_enabled: bool) ->
 
 inject_styles()
 st.title("TRUST-HEADERS")
-st.markdown(
-    '<div class="marquee">SOC MAIL ANALYSIS TERMINAL // HEADER-ONLY PROCESSING // NO LOGGING // NO PERSISTENCE</div>',
-    unsafe_allow_html=True,
-)
+st.markdown("**SOC MAIL ANALYSIS TERMINAL**")
 
 input_col, output_col = st.columns([0.82, 1.35], gap="medium")
 with input_col:
@@ -277,6 +293,18 @@ with input_col:
             placeholder="From: Example <sender@example.com>\nReturn-Path: <bounce@example.com>\n...",
         )
         enrich_enabled = st.checkbox("QUERY THREAT INTEL APIS", value=False)
+        selected_apis = []
+        if enrich_enabled:
+            with st.container(border=True):
+                st.caption("Select providers to query:")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.checkbox("AbuseIPDB", value=True): selected_apis.append("ABUSEIPDB")
+                    if st.checkbox("AlienVault OTX", value=True): selected_apis.append("OTX")
+                with c2:
+                    if st.checkbox("VirusTotal", value=True): selected_apis.append("VIRUSTOTAL")
+                    if st.checkbox("ThreatFox", value=True): selected_apis.append("THREATFOX")
+        
         st.caption("Data is processed in memory. Body content is discarded; attachments are counted and hashed.")
         analyze_clicked = st.button("ANALYZE TRANSMISSION", type="primary", width="stretch")
         if analyze_clicked:
@@ -288,7 +316,7 @@ with input_col:
                 st.warning("Paste headers or upload an email first.")
             else:
                 try:
-                    run_analysis(payload, name, enrich_enabled)
+                    run_analysis(payload, name, enrich_enabled, selected_apis)
                 except ParseError as exc:
                     st.error(str(exc))
                 except Exception as exc:

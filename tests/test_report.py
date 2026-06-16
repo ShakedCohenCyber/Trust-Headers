@@ -39,7 +39,7 @@ https://merkavamarketing.com/confirm
     assert "Return Path: bounce@merkavamarketing.com" in notes
     assert "Sender IP:" not in notes
     assert "Not available" not in notes
-    assert "URLs:\nhttps://merkavamarketing.com/pay\nhttps://merkavamarketing.com/confirm" in notes
+    assert "URLs:\n1. https://merkavamarketing.com/pay\n\n2. https://merkavamarketing.com/confirm" in notes
     assert "\nInvestigation:\n" in notes
     assert (
         "An email was sent from Kupat Ha'ir <michael@jewishaffiliatenetwork.net> "

@@ -65,7 +65,7 @@ def build_report(result: AnalysisResult, intel: list[dict[str, str]]) -> str:
     lines.extend(("", "[INDICATORS]"))
     lines.append(f"IPs: {', '.join(parsed.originating_ips) or 'None'}")
     lines.append(f"Domains: {', '.join(parsed.domains) or 'None'}")
-    lines.append(f"URLs: {', '.join(_urls(parsed)) or 'None'}")
+    lines.extend(_url_detail_lines(result))
     lines.append(f"Attachments: {len(parsed.attachments)}")
     lines.extend(
         f"Attachment: {item.filename} | sha256={item.sha256} | bytes={item.size}"
@@ -174,7 +174,17 @@ def _url_detail_lines(result: AnalysisResult) -> list[str]:
     urls = _urls(result.parsed)
     if not urls:
         return ["URLs: None"]
-    return ["URLs:", *urls]
+        
+    if len(urls) == 1:
+        return ["URLs:", urls[0]]
+        
+    lines = ["URLs:"]
+    for i, url in enumerate(urls, 1):
+        lines.append(f"{i}. {url}")
+        if i < len(urls):
+            lines.append("")
+            
+    return lines
 
 
 def _investigation_intro(result: AnalysisResult) -> str:

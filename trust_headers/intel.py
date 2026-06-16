@@ -4,10 +4,38 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
 import aiohttp
+
+# --- SSRF protection -----------------------------------------------------------
+# Only allow safe characters in indicators interpolated into API URL paths.
+# Blocks path-traversal (../), query-string injection (?&), and fragment (#).
+_SAFE_INDICATOR_RE = re.compile(r"^[a-zA-Z0-9._:\-]+$")
+
+# TLDs that resolve only inside private networks — never query external APIs.
+_BLOCKED_TLDS = frozenset({
+    "internal", "local", "localhost", "localdomain", "corp",
+    "lan", "home", "intranet", "private", "test", "invalid",
+})
+
+
+def _is_safe_indicator(value: str, *, require_dot: bool = False) -> bool:
+    """Return True if *value* is safe to embed in an API URL path segment."""
+    if not value or not _SAFE_INDICATOR_RE.match(value):
+        return False
+    if ".." in value:                       # path-traversal via double-dot
+        return False
+    if require_dot and "." not in value:    # domains must have at least one dot
+        return False
+    if require_dot:                         # block reserved/internal TLDs
+        tld = value.rsplit(".", 1)[-1].lower()
+        if tld in _BLOCKED_TLDS:
+            return False
+    return True
+# -------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -26,11 +54,15 @@ async def enrich(
     timeout_seconds: float = 7.0,
 ) -> list[dict[str, str]]:
     """Query all configured sources concurrently within a single timeout budget."""
+    # Sanitise indicators before any network call (SSRF mitigation).
+    safe_ips = tuple(ip for ip in ips if _is_safe_indicator(ip))
+    safe_domains = tuple(d for d in domains if _is_safe_indicator(d, require_dot=True))
+
     timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=3)
     connector = aiohttp.TCPConnector(limit=24, ttl_dns_cache=300)
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         tasks = []
-        for ip in ips[:10]:
+        for ip in safe_ips[:10]:
             tasks.extend(
                 (
                     _abuseipdb(session, ip, api_keys.get("ABUSEIPDB_API_KEY", "")),
@@ -39,7 +71,7 @@ async def enrich(
                     _threatfox(session, ip, "ip", api_keys.get("THREATFOX_API_KEY", "")),
                 )
             )
-        for domain in domains[:10]:
+        for domain in safe_domains[:10]:
             tasks.extend(
                 (
                     _otx(session, domain, "domain", api_keys.get("OTX_API_KEY", "")),
